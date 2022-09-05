@@ -12,8 +12,8 @@ from loguru import logger
 from pr3d.de.cond_gamma_mevm import ConditionalGammaMixtureEVM
 
 conditions = {
-    "hops_num": 10,
-    "snr": 1,
+    "hops_num": 5,
+    "snr": 0,
     "rho": 11,
 }
 
@@ -21,7 +21,7 @@ fig, ax = plt.subplots()
 
 
 p = Path(__file__).parents[0]
-project_path = str(p) + "/projects/sta_train/"
+project_path = str(p) + "/projects/sta_train_huge/"
 results_path = project_path + f"{conditions['hops_num']}_results/"
 records_path = results_path + "records/"
 predictor_path = results_path + "predictors/" + "ls_gmevm_model_0.h5"

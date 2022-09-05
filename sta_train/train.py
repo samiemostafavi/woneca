@@ -55,7 +55,7 @@ strdtype = "float64"
 # open the dataset
 # project folder setting
 p = Path(__file__).parents[0]
-project_folder = str(p) + "/projects/sta_train/"
+project_folder = str(p) + "/projects/sta_train_huge/"
 project_paths = [
     project_folder + name
     for name in os.listdir(project_folder)
@@ -64,38 +64,38 @@ project_paths = [
 
 # limit
 project_paths = [
-    #'/home/wlab/woneca/sta_train/projects/sta_train/5_results',
-    #'/home/wlab/woneca/sta_train/projects/sta_train/1_results',
-    "/home/wlab/woneca/sta_train/projects/sta_train/10_results",
+    '/home/wlab/woneca/sta_train/projects/sta_train_huge/5_results',
+    #'/home/wlab/woneca/sta_train/projects/sta_train_huge/1_results',
+    #"/home/wlab/woneca/sta_train/projects/sta_train_huge/10_results",
 ]
 
 logger.info(f"Opening projects paths: {project_paths}")
 records_paths = [s + "/records" for s in project_paths]
 
 # high sample training params
-"""
+
 training_params = {
     'dataset_size': 'all',  # 60*1024, 60*1024*1024, 'all'
-    'batch_size': 1024*128,  # 1024, 1024*128
+    'batch_size': 1024 * 512,  # 1024, 1024*128
     'rounds' : [
-        {'learning_rate': 1e-2, 'epochs':20}, # GMEVM: 15, GMM:
-        {'learning_rate': 1e-3, 'epochs':20}, # GMEVM: 15, GMM:
-        {'learning_rate': 1e-4, 'epochs':15}, # GMEVM: 10, GMM:
+        {'learning_rate': 1e-2, 'epochs':10}, # GMEVM: 15, GMM:
+        {'learning_rate': 1e-3, 'epochs':10}, # GMEVM: 15, GMM:
+        {'learning_rate': 1e-4, 'epochs':5}, # GMEVM: 10, GMM:
     ],
 }
 """
 
 # low sample training params
 training_params = {
-    "dataset_size": "all",  # 60*1024, 60*1024*1024, 'all'
-    "batch_size": 1024 * 128,  # 1024, 1024*128
+    "dataset_size": 1024 * 1024 * 16,  # 60*1024, 60*1024*1024, 'all'
+    "batch_size": 1024 * 512,  # 1024, 1024*128
     "rounds": [
-        {"learning_rate": 1e-2, "epochs": 5},  # GMEVM: 15, GMM:
-        {"learning_rate": 1e-3, "epochs": 5},  # GMEVM: 15, GMM:
+        {"learning_rate": 1e-2, "epochs": 10},  # GMEVM: 15, GMM:
+        {"learning_rate": 1e-3, "epochs": 10},  # GMEVM: 15, GMM:
         {"learning_rate": 1e-4, "epochs": 5},  # GMEVM: 10, GMM:
     ],
 }
-
+"""
 
 condition_labels = ["snr", "rho"]
 y_label = "end2end_delay"
