@@ -2,6 +2,7 @@ import json
 import math
 import os
 
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -10,10 +11,18 @@ import seaborn as sns
 from loguru import logger
 
 max_x = 60
-hops_nums = [10]
-fig, ax = plt.subplots()
-project_path = "sta_benchmark/projects/sta_train/"
-plot_wtb = False
+hops_nums = [5,10]
+project_path = "sta_train/projects/prefinal/"
+x_label = "End-to-end delay (ms)"
+y_label = "Violation probability"
+plot_wtb = True
+
+plt.rcParams["font.family"] = "Times New Roman"
+font = {
+    'size'   : 17
+}
+matplotlib.rc('font', **font)
+fig, ax = plt.subplots(figsize=(8,5))
 
 for hops_num in hops_nums:
 
@@ -53,35 +62,61 @@ for hops_num in hops_nums:
     )
     """
 
+    drop_prc = 0.5
+    s_num = int(len(df)*drop_prc)
+    logger.info(f"Dropping first {drop_prc} fraction which is {s_num} samples.")
+    pd_df = df.to_pandas()
+    pd_df = pd_df.iloc[s_num:]
+    df = pl.DataFrame(pd_df)
+    logger.info(f"New df len {len(df)}")
+
     logger.info(f"Total number of samples in this empirical dataset: {len(df)}")
     delays = range(max_x)
     res = []
+    #old = len(df)
     for x in delays:
         # print(f"x: {x}")
         df_cond = df.filter(pl.col("end2end_delay") > x)
         # print(len(df_cond))
+        #if len(df_cond) > 20:
+        #    diff = len(df_cond)/old
         res.append(len(df_cond) / len(df))
+        #    old = len(df_cond)
+        #else:
+        #    res.append((old*diff) / len(df))
+        #    old = old*diff
         # r = (df.select(pl.col('noisy_end2end_delay').quantile(quantile,'midpoint')))
         # res.append(r[0,0])
+        
 
-    ax.semilogy(
+    sim_line, = ax.semilogy(
         delays,  # res,
         res,
+        linestyle='solid',
+        linewidth=3,
         marker=".",
-        label=f"simulation - {hops_num} hops",
+        markersize=12,
+        label=f"Simulation, {hops_num} hops",
     )
     if plot_wtb:
         ax.semilogy(
             wtb_delays,  # res,
             wtb_probs,
+            linestyle='dotted',
+            linewidth=3,
+            color = sim_line.get_color(),
             marker=".",
-            label=f"WTB - {hops_num} hops",
+            markersize=12,
+            label=f"Bound, {hops_num} hops",
         )
 
+ax.set_xlabel(x_label)
+ax.set_ylabel(y_label)
 ax.set_xlim(0, max_x)
-ax.set_ylim(1e-6, 1e0)
-ax.grid()
+ax.set_ylim(1e-5, 1e0)
 ax.legend()
+ax.grid()
+
 
 fig.tight_layout()
-fig.savefig(project_path + "sta_validation_tail.png")
+fig.savefig(project_path + "sta_validation_tail_new.png")

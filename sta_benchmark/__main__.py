@@ -1,6 +1,8 @@
+import itertools
 import multiprocessing as mp
 import os
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +13,6 @@ from qsimpy.discrete import CapacityQueue, CapacitySource, Deterministic, Raylei
 from qsimpy.polar import PolarSink
 from qsimpy.simplequeue import SimpleQueue
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
 
 def create_run_graph(params):
     # Create the QSimPy environment
@@ -22,7 +22,7 @@ def create_run_graph(params):
     # arrival process uniform
     arrival = Deterministic(
         seed=0,
-        rate=11,
+        rate=params["rho"],
         initial_load=0,
         duration=None,
         dtype="float64",
@@ -35,6 +35,7 @@ def create_run_graph(params):
     )
     model.add_entity(source)
 
+    queue = None
     for queue_num in range(params["num_queues"]):
         queue_name = f"queue_{str(queue_num)}"
 
@@ -46,9 +47,9 @@ def create_run_graph(params):
 
         # service process is Rayleigh channel capacity
         service = Rayleigh(
-            seed=120034,
-            snr=0,  # in db
-            bandwidth=17e3,  # in hz
+            seed=params["service_seed"]+queue_num*1002,
+            snr=params["snr"],  # in db
+            bandwidth=20e3,  # in hz
             time_slot_duration=1e-3,  # in seconds
             dtype="float64",
         )
@@ -71,6 +72,8 @@ def create_run_graph(params):
     def user_fn(df):
         # df is pandas dataframe in batch_size
         df["end2end_delay"] = df["end_time"] - df["start_time"]
+        df["snr"] = params["snr"]
+        df["rho"] = params["rho"]
         return df
 
     sink._post_process_fn = user_fn
@@ -150,7 +153,7 @@ def create_run_graph(params):
     # df_dropped = df.filter(pl.col("end_time") == -1)
     df_finished = df.filter(pl.col("end_time") >= 0)
     df = df_finished
-
+    # print(df)
     # print(df)
 
     end = time.time()
@@ -171,42 +174,86 @@ if __name__ == "__main__":
 
     # project folder setting
     p = Path(__file__).parents[0]
-    project_path = str(p) + "/projects/sta_train/"
+    project_path = str(p) + "/projects/prefinal_train/"
 
     # simulation parameters
     # bench_params = {str(n): n for n in range(15)}
-    bench_params = {
-        #'1':1,
-        #'5':5,
+    hops_options = {
+        #"1": 1,
+        "5": 5,
         "10": 10,
     }
 
-    sequential_runs = 1  # 5
+    '''
+    snr_params = OrderedDict()
+    snr_params["snr_4"] = 4
+    #snr_params["snr_5"] = 5
+    #snr_params["snr_7"] = 7
+
+    arrival_rate_params = OrderedDict()
+    arrival_rate_params["rho_20"] = 25
+    #arrival_rate_params["rho_25"] = 25
+
+    
+    index_list = [[idx for idx in range(1)] for _ in range(2)]
+    combinations_idx = list(itertools.product(*index_list))
+    bench_params = {}
+    for comb in combinations_idx:
+        name_str = f"{list(snr_params.items())[comb[0]][0]}_"
+        name_str += f"{list(arrival_rate_params.items())[comb[1]][0]}"
+        bench_params = {
+            **bench_params,
+            name_str: {
+                "snr": list(snr_params.items())[comb[0]][1],
+                "rho": list(arrival_rate_params.items())[comb[1]][1],
+            },
+        }
+    '''
+    # limit
+    bench_params = {
+        'bp0': {
+            'snr':5,
+            'rho':25,
+        },
+        'bp1': {
+            'snr':4,
+            'rho':25,
+        },
+        'bp2': {
+            'snr':3,
+            'rho':20,
+        }
+    }
+
+    sequential_runs = 2  # 3
     parallel_runs = 18  # 18
     for j in range(sequential_runs):
+
+        hops_keys = list(hops_options.keys())
+        hops_this_run_key = hops_keys[j % len(hops_keys)]
 
         processes = []
         for i in range(parallel_runs):  # range(parallel_runs):
 
             # parameter figure out
-            keys = list(bench_params.keys())
-            # remember to modify this line
-            key_this_run = keys[i % len(keys)]
+            params_keys = list(bench_params.keys())
+            params_this_run_key = params_keys[i % len(params_keys)]
 
             # create and prepare the results directory
-            results_path = project_path + key_this_run + "_results/"
+            results_path = project_path + hops_this_run_key + "_results/"
             records_path = results_path + "records/"
             os.makedirs(records_path, exist_ok=True)
 
-            until = int(100000)
+            until = int(50000)
             params = {
                 "records_path": records_path,
                 "arrivals_number": int(until / 10),
                 "run_number": j * parallel_runs + i,
                 "service_seed": 120034 + i * 200202 + j * 20111,
-                "num_queues": bench_params[key_this_run],  # number of queues
+                "num_queues": hops_options[hops_this_run_key],  # number of queues
                 "until": until,  # 10M timesteps takes 1000 seconds, generates 900k samples
                 "report_state": 0.05,  # report when 10%, 20%, etc progress reaches
+                **bench_params[params_this_run_key],
             }
 
             p = mp.Process(target=create_run_graph, args=(params,))

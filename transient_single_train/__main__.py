@@ -1,70 +1,82 @@
-import itertools
 import multiprocessing as mp
 import os
 import time
-from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 from loguru import logger
 from qsimpy.core import Model, Sink
-from qsimpy.discrete import CapacityQueue, CapacitySource, Deterministic, Rayleigh
-from qsimpy.polar import PolarSink
+from qsimpy.discrete import CapacityQueue, Rayleigh
+from qsimpy.gym import GymSink, GymSource
+from qsimpy.random import RandomProcess
 from qsimpy.simplequeue import SimpleQueue
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+class MultiTimeGymSource(GymSource):
+    type: str = "multitimegymsource"
+    train_length: int
+
+    def run(self):
+        """The generator function used in simulations."""
+        if self.finish_time is None:
+            _finish_time = float("inf")
+        while self._env.now < _finish_time:
+            # generate and send the traffic
+            traffic_tasks = self.generate_traffic_tasks(self.traffic_task_num)
+            if self.out is not None:
+                for traffic_task in traffic_tasks:
+                    self._out.put(traffic_task)
+
+            main_tasks = self.generate_main_tasks(self.main_task_num)
+            tasks_per_wagon = int(self.main_task_num/self.train_length)
+            for i in range(self.train_length):
+                # generate and send the main task
+                this_round_tasks = main_tasks[i*tasks_per_wagon:(i+1)*tasks_per_wagon]
+                if self.out is not None:
+                    for main_task in this_round_tasks:
+                        self._out.put(main_task)
+
+                yield self._model._env.timeout(1.0)
+
+            # wait for the next transmission
+            yield self._store.get()
 
 def create_run_graph(params):
     # Create the QSimPy environment
     # a class for keeping all of the entities and accessing their attributes
     model = Model(name=f"Gym Rayleigh benchmark #{params['run_number']}")
 
-    # arrival process uniform
-    arrival = Deterministic(
-        seed=0,
-        rate=params["rho"],
-        initial_load=0,
-        duration=None,
-        dtype="float64",
-    )
-    # Create a source
-    source = CapacitySource(
+    # create the gym source
+    source = MultiTimeGymSource(
         name="start-node",
-        arrival_rp=arrival,
-        task_type="0",
+        main_task_num=25*5,
+        train_length=5,
+        main_task_type="main",
+        traffic_task_type="traffic",
+        traffic_task_num=params["traffic_tasks"],
     )
     model.add_entity(source)
 
-    queue = None
-    for queue_num in range(params["num_queues"]):
-        queue_name = f"queue_{str(queue_num)}"
-
-        if queue_num == 0:
-            source.out = queue_name
-        else:
-            # old queue connect
-            queue.out = queue_name
-
-        # service process is Rayleigh channel capacity
-        service = Rayleigh(
-            seed=params["service_seed"]+queue_num*1002,
-            snr=params["snr"],  # in db
-            bandwidth=17e3,  # in hz
-            time_slot_duration=1e-3,  # in seconds
-            dtype="float64",
-        )
-        # a queue
-        queue = CapacityQueue(
-            name=f"queue_{queue_num}",
-            service_rp=service,
-            queue_limit=None,
-        )
-        model.add_entity(queue)
-
-    last_queue = queue
+    # service process is Rayleigh channel capacity
+    service = Rayleigh(
+        seed=params["service_seed"],
+        snr=5,  # in db
+        bandwidth=20e3,  # in hz
+        time_slot_duration=1e-3,  # in seconds
+        dtype="float64",
+    )
+    # a queue
+    queue = CapacityQueue(
+        name="queue",
+        service_rp=service,
+        queue_limit=None,
+    )
+    model.add_entity(queue)
 
     # create the sinks
-    sink = PolarSink(
+    sink = GymSink(
         name="gym-sink",
         batch_size=10000,
     )
@@ -72,16 +84,22 @@ def create_run_graph(params):
     def user_fn(df):
         # df is pandas dataframe in batch_size
         df["end2end_delay"] = df["end_time"] - df["start_time"]
-        df["snr"] = params["snr"]
-        df["rho"] = params["rho"]
         return df
 
     sink._post_process_fn = user_fn
     model.add_entity(sink)
 
-    # make the rest of the connections
-    last_queue.out = sink.name
-    last_queue.drop = sink.name
+    drop_sink = Sink(
+        name="drop-sink",
+    )
+    model.add_entity(drop_sink)
+
+    # make the connections
+    source.out = queue.name
+    queue.out = sink.name
+    queue.drop = drop_sink.name
+    sink.out = source.name
+    # queue should not drop any task
 
     # Setup task records
     model.set_task_records(
@@ -90,8 +108,18 @@ def create_run_graph(params):
                 source.name: {
                     "task_generation": "start_time",
                 },
-                last_queue.name: {
+                queue.name: {
+                    "task_reception": "queue_time",
                     "service_time": "end_time",
+                },
+            },
+            "attributes": {
+                source.name: {
+                    "task_generation": {
+                        queue.name: {
+                            "queue_length": "queue_length",
+                        },
+                    },
                 },
             },
         }
@@ -129,8 +157,8 @@ def create_run_graph(params):
     logger.info(f"{params['run_number']}: Run finished in {end - start} seconds")
 
     logger.info(
-        "{0}: Source generated {1} tasks".format(
-            params["run_number"], source.get_attribute("tasks_generated")
+        "{0}: Source generated {1} main tasks".format(
+            params["run_number"], source.get_attribute("main_tasks_generated")
         )
     )
     logger.info(
@@ -153,8 +181,8 @@ def create_run_graph(params):
     # df_dropped = df.filter(pl.col("end_time") == -1)
     df_finished = df.filter(pl.col("end_time") >= 0)
     df = df_finished
-    print(df)
-    # print(df)
+
+    #print(df)
 
     end = time.time()
 
@@ -174,70 +202,46 @@ if __name__ == "__main__":
 
     # project folder setting
     p = Path(__file__).parents[0]
-    project_path = str(p) + "/projects/sta_test/"
+    project_path = str(p) + "/projects/transient/"
 
     # simulation parameters
     # bench_params = {str(n): n for n in range(15)}
-    hops_options = {
-        #"1": 1,
-        #"5": 5,
-        "10": 10,
+    bench_params = {
+        #"0": [0,15000],
+        #"20": [20,2000],
+        #"40": [40,1200],
+        #"60": [60,1200],
+        #"80": [80,1400],
+        "100": [100,500],
     }
 
-    snr_params = OrderedDict()
-    snr_params["snr_0"] = 0
-    #snr_params["snr_1p5"] = 1.5
-    #snr_params["snr_3"] = 3
-
-    arrival_rate_params = OrderedDict()
-    arrival_rate_params["rho_7"] = 11
-    #arrival_rate_params["rho_9"] = 9
-    #arrival_rate_params["rho_11"] = 11
-
-    index_list = [[idx for idx in range(1)] for _ in range(2)]
-    combinations_idx = list(itertools.product(*index_list))
-    bench_params = {}
-    for comb in combinations_idx:
-        name_str = f"{list(snr_params.items())[comb[0]][0]}_"
-        name_str += f"{list(arrival_rate_params.items())[comb[1]][0]}"
-        bench_params = {
-            **bench_params,
-            name_str: {
-                "snr": list(snr_params.items())[comb[0]][1],
-                "rho": list(arrival_rate_params.items())[comb[1]][1],
-            },
-        }
-    
-
     sequential_runs = 1  # 5
-    parallel_runs = 18  # 18
+    parallel_runs = 1  # 18
     for j in range(sequential_runs):
-
-        hops_keys = list(hops_options.keys())
-        hops_this_run_key = hops_keys[j % len(hops_keys)]
 
         processes = []
         for i in range(parallel_runs):  # range(parallel_runs):
 
             # parameter figure out
-            params_keys = list(bench_params.keys())
-            params_this_run_key = params_keys[i % len(params_keys)]
+            keys = list(bench_params.keys())
+            # remember to modify this line
+            key_this_run = keys[i % len(keys)]
 
             # create and prepare the results directory
-            results_path = project_path + hops_this_run_key + "_results/"
+            results_path = project_path + key_this_run + "_results/"
             records_path = results_path + "records/"
             os.makedirs(records_path, exist_ok=True)
 
-            until = int(10000)
+            #until = int(800 * (bench_params[key_this_run] + 1))
+            until = int(bench_params[key_this_run][1] * (bench_params[key_this_run][0] + 1))
             params = {
                 "records_path": records_path,
                 "arrivals_number": int(until / 10),
                 "run_number": j * parallel_runs + i,
                 "service_seed": 120034 + i * 200202 + j * 20111,
-                "num_queues": hops_options[hops_this_run_key],  # number of queues
+                "traffic_tasks": bench_params[key_this_run][0],  # number of traffic tasks
                 "until": until,  # 10M timesteps takes 1000 seconds, generates 900k samples
                 "report_state": 0.05,  # report when 10%, 20%, etc progress reaches
-                **bench_params[params_this_run_key],
             }
 
             p = mp.Process(target=create_run_graph, args=(params,))

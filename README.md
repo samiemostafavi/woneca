@@ -18,45 +18,49 @@ Install dependencies
 
 # Usage
 
-Tune CoDel, note that `until` argument above 100k makes the run much longer
+Comparison schemes figure 1:
 
-        $ python -m tune_codel -a 0.09 -u 100000 -l tune_lowutil --target-bounds 1,300 --target-initial 20 --interval-bounds 1,300 --interval-initial 10 --run-noaqm
-        $ python -m tune_codel -a 0.095 -u 100000 -l tune_highutil --target-bounds 1,300 --target-initial 20 --interval-bounds 1,300 --interval-initial 10 --run-noaqm
+        W=20khz, rho=25, snr=5db, 3.16 linear, N=10
+        W=20khz, rho=25, snr=5db, 3.16 linear, N=5
+        W=20khz, rho=25, snr=5db, 3.16 linear, N=1
 
-Train Deep Queue Network implementation as follows. We set the `delay_ref` parameter to the target delay obtained by tuning CoDel.
+Comparison schemes figure 2:
 
-        $ python -m train_deepq -a 0.09 -u 100000 -e 1000000 -l lowutil --interval 2 --delta 0.8 --run-noaqm
-        $ python -m train_deepq -a 0.095 -u 100000 -e 1000000 -l highutil --interval 2 --delta 0.9 --run-noaqm
+        W=20khz, rho=25, snr=5db, 3.16 linear, N=10
+        W=20khz, rho=25, snr=5db, 3.16 linear, N=5
 
-Run delay bound benchmarks
+        W=20khz, rho=25, snr=4db, 2 linear, N=10
+        W=20khz, rho=25, snr=4db, 2 linear, N=5
 
-        $ python -m delay_bound_benchmark run --arrival-rate 0.09 --until 1000000 --label lowutil --module delta --run-noaqm
-        $ python -m delay_bound_benchmark run --arrival-rate 0.09 --until 1000000 --label lowutil --module offline-optimum
-        $ python -m delay_bound_benchmark run --arrival-rate 0.09 --until 1000000 --label lowutil --module codel
-        $ python -m delay_bound_benchmark run --arrival-rate 0.09 --until 1000000 --label lowutil --module deepq
-        
-        $ python -m delay_bound_benchmark run --arrival-rate 0.095 --until 1000000 --label highutil --module delta --run-noaqm
-        $ python -m delay_bound_benchmark run --arrival-rate 0.095 --until 1000000 --label highutil --module offline-optimum
-        $ python -m delay_bound_benchmark run --arrival-rate 0.095 --until 1000000 --label highutil --module codel
-        $ python -m delay_bound_benchmark run --arrival-rate 0.095 --until 1000000 --label highutil --module deepq
+        W=20khz, rho=20, snr=4db, 2 linear, N=10
+        W=20khz, rho=20, snr=4db, 2 linear, N=5
 
-Plot the delay bound benchmark results
+        W=20khz, rho=20, snr=3db, 2 linear, N=10
+        W=20khz, rho=20, snr=3db, 2 linear, N=5
 
-        $ python -m delay_bound_benchmark plot --project lowutil --models deepq,codel,delta,offline-optimum --type png
-        $ python -m delay_bound_benchmark plot --project highutil --models deepq,codel,delta,offline-optimum --type png
+# Training specs: ideal
 
-Run delta models benchmarks
+N=5
+        "type": "gmevm",
+        "centers": 4,
+        "hidden_sizes": (30, 50, 30),
+        "dataset_size": 'all'
+        "batch_size": 1024 * 512,  # 1024, 1024*128
+        "rounds": [
+                {"learning_rate": 1e-2, "epochs": 40}
+                {"learning_rate": 1e-3, "epochs": 10}
+        ],
+N=10
+        "type": "gmevm",
+        "centers": 4,
+        "hidden_sizes": (30, 50, 30),
+        "dataset_size": 'all'
+        "batch_size": 1024 * 512,  # 1024, 1024*128
+        "rounds": [
+                {"learning_rate": 1e-2, "epochs": 40}
+                {"learning_rate": 1e-3, "epochs": 10}
+        ],
 
-        $ python -m delta_models_benchmark run -a 0.089 -u 1000000 -l lowutil -m gmevm --run-noaqm
-        $ python -m delta_models_benchmark run -a 0.089 -u 1000000 -l lowutil -m gmm --run-noaqm
-
-        $ python -m delta_models_benchmark run -a 0.094 -u 1000000 -l highutil -m gmevm --run-noaqm
-        $ python -m delta_models_benchmark run -a 0.094 -u 1000000 -l highutil -m gmm --run-noaqm
-
-Plot delta models benchmark results
-
-        $ python -m delta_models_benchmark plot --project lowutil --models gmm,gmevm,offline-optimum --type png
-        $ python -m delta_models_benchmark plot --project highutil --models gmm,gmevm,offline-optimum --type png
 
 # Contributing
 

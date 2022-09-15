@@ -55,7 +55,7 @@ strdtype = "float64"
 # open the dataset
 # project folder setting
 p = Path(__file__).parents[0]
-project_folder = str(p) + "/projects/prefinal_train_moderatesample/"
+project_folder = str(p) + "/projects/prefinal_train/"
 project_paths = [
     project_folder + name
     for name in os.listdir(project_folder)
@@ -64,37 +64,39 @@ project_paths = [
 
 # limit
 project_paths = [
-    #'/home/wlab/woneca/sta_train/projects/prefinal_train_lowsample/1_results',
-    '/home/wlab/woneca/sta_train/projects/prefinal_train_moderatesample/5_results',
-    '/home/wlab/woneca/sta_train/projects/prefinal_train_moderatesample/10_results',
+    #'/home/wlab/woneca/sta_train/projects/prefinal_train/1_results',
+    #'/home/wlab/woneca/sta_train/projects/prefinal_train/5_results',
+    '/home/wlab/woneca/sta_train/projects/prefinal_train/10_results',
 ]
 
 logger.info(f"Opening projects paths: {project_paths}")
 records_paths = [s + "/records" for s in project_paths]
 
 # high sample training params
-
+"""
 training_params = {
-    'dataset_size': 6*1024,  # 60*1024, 60*1024*1024, 'all'
-    'batch_size': 512,  # 1024, 1024*128
+    'dataset_size': 'all',  # 60*1024, 60*1024*1024, 'all'
+    'batch_size': 1024 * 512,  # 1024, 1024*128
     'rounds' : [
-        {'learning_rate': 1e-2, 'epochs':40}, # GMEVM: 15, GMM:
-        {'learning_rate': 1e-3, 'epochs':30}, # GMEVM: 10, GMM:
+        {'learning_rate': 1e-2, 'epochs':10}, # GMEVM: 15, GMM:
+        {'learning_rate': 1e-3, 'epochs':10}, # GMEVM: 15, GMM:
+        {'learning_rate': 1e-4, 'epochs':5}, # GMEVM: 10, GMM:
     ],
 }
-
 """
+
 # low sample training params
 training_params = {
     "dataset_size": 'all' ,  # 60*1024, 60*1024*1024, 'all'
     "batch_size": 1024 * 512,  # 1024, 1024*128
     "rounds": [
-        {"learning_rate": 1e-2, "epochs": 50},  # GMEVM: 15, GMM:
+        {"learning_rate": 1e-3, "epochs": 10},  # GMEVM: 15, GMM:
         #{"learning_rate": 1e-3, "epochs": 20},  # GMEVM: 15, GMM:
         #{"learning_rate": 1e-4, "epochs": 10},  # GMEVM: 10, GMM:
     ],
 }
-"""
+
+model_addr = "/home/wlab/woneca/sta_train/projects/prefinal_train/10_results/predictors/ls_gmevm_model_0.h5"
 
 condition_labels = ["snr", "rho"]
 y_label = "end2end_delay"
@@ -210,81 +212,56 @@ for idx, records_path in enumerate(records_paths):
         condition_labels = model_conf["condition_labels"]
         training_rounds = training_params["rounds"]
         batch_size = training_params["batch_size"]
-        for num_ensemble in range(ensembles):
 
-            # initiate the non conditional predictor
-            if model_type == "gmm":
-                model = ConditionalGaussianMM(
-                    x_dim=condition_labels,
-                    centers=model_conf["centers"],
-                    hidden_sizes=model_conf["hidden_sizes"],
-                    dtype=strdtype,
-                    bayesian=model_conf["bayesian"],
-                    # batch_size = 1024,
-                )
-            elif model_type == "gevm":
-                model = ConditionalGammaEVM(
-                    x_dim=condition_labels,
-                    hidden_sizes=model_conf["hidden_sizes"],
-                    dtype=strdtype,
-                    bayesian=model_conf["bayesian"],
-                    # batch_size = 1024,
-                )
-            elif model_type == "gmevm":
-                model = ConditionalGammaMixtureEVM(
-                    x_dim=condition_labels,
-                    centers=model_conf["centers"],
-                    hidden_sizes=model_conf["hidden_sizes"],
-                    dtype=strdtype,
-                    bayesian=model_conf["bayesian"],
-                    # batch_size = 1024,
+        model = ConditionalGammaMixtureEVM( #ConditionalGaussianMM #ConditionalGammaMixtureEVM
+            h5_addr = model_addr,
+        )
+
+        with converter_train.make_tf_dataset(
+            transform_spec=transform_spec_fn,
+            batch_size=batch_size,
+        ) as train_dataset:
+
+            # tf.keras only accept tuples, not namedtuples
+            # map the dataset to the desired tf.keras input in _pl_training_model
+            def map_fn(x):
+                x_dict = {}
+                for idx, cond in enumerate(condition_labels):
+                    x_dict = {**x_dict, cond: x[idx]}
+                return ({**x_dict, "y_input": x.y_input}, x.y_input)
+
+            train_dataset = train_dataset.map(map_fn)
+
+            steps_per_epoch = len(converter_train) // batch_size
+
+            for idx, params in enumerate(training_rounds):
+                logger.info(
+                    f"Starting training session {idx}/{len(training_rounds)} with {params}"
                 )
 
-            with converter_train.make_tf_dataset(
-                transform_spec=transform_spec_fn,
-                batch_size=batch_size,
-            ) as train_dataset:
+                model._pl_training_model.compile(
+                    optimizer=keras.optimizers.Adam(
+                        learning_rate=params["learning_rate"]
+                    ),
+                    loss=model.loss,
+                )
 
-                # tf.keras only accept tuples, not namedtuples
-                # map the dataset to the desired tf.keras input in _pl_training_model
-                def map_fn(x):
-                    x_dict = {}
-                    for idx, cond in enumerate(condition_labels):
-                        x_dict = {**x_dict, cond: x[idx]}
-                    return ({**x_dict, "y_input": x.y_input}, x.y_input)
+                logger.info(f"steps_per_epoch: {steps_per_epoch}")
 
-                train_dataset = train_dataset.map(map_fn)
+                model._pl_training_model.fit(
+                    train_dataset,
+                    steps_per_epoch=steps_per_epoch,
+                    epochs=params["epochs"],
+                    verbose=1,
+                )
 
-                steps_per_epoch = len(converter_train) // batch_size
+        model.save(predictors_path + f"ls_{model_type}_model_more.h5")
+        with open(
+            predictors_path + f"ls_{model_type}_model_more.json", "w"
+        ) as write_file:
+            json.dump(model_conf, write_file, indent=4)
 
-                for idx, params in enumerate(training_rounds):
-                    logger.info(
-                        f"Starting training session {idx}/{len(training_rounds)} with {params}"
-                    )
-
-                    model._pl_training_model.compile(
-                        optimizer=keras.optimizers.Adam(
-                            learning_rate=params["learning_rate"]
-                        ),
-                        loss=model.loss,
-                    )
-
-                    logger.info(f"steps_per_epoch: {steps_per_epoch}")
-
-                    model._pl_training_model.fit(
-                        train_dataset,
-                        steps_per_epoch=steps_per_epoch,
-                        epochs=params["epochs"],
-                        verbose=1,
-                    )
-
-            model.save(predictors_path + f"ls_{model_type}_model_{num_ensemble}.h5")
-            with open(
-                predictors_path + f"ls_{model_type}_model_{num_ensemble}.json", "w"
-            ) as write_file:
-                json.dump(model_conf, write_file, indent=4)
-
-            logger.info(
-                f"A {model_type} {'bayesian' if model.bayesian else 'non-bayesian'} "
-                + f"model got trained and saved, ensemble: {num_ensemble}."
-            )
+        logger.info(
+            f"A {model_type} {'bayesian' if model.bayesian else 'non-bayesian'} "
+            + "model got trained more and saved."
+        )
